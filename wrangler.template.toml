@@ -1,0 +1,15 @@
+name = "roscoe"
+main = "./build/worker.mjs"
+compatibility_date = "2024-04-15"
+
+routes = [
+  { pattern = "${CUSTOM_DOMAIN}", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "roscoe"
+database_id = "${ROSCOE_CF_D1_ID}"
+
+[observability.logs]
+enabled = true
