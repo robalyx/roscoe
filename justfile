@@ -1,3 +1,5 @@
+set dotenv-load
+set dotenv-required
 set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-c"]
 
 # Default recipe to display help information
