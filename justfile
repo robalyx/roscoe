@@ -17,7 +17,7 @@ dev: generate-config build
 # Build the worker
 build: generate-config
     cd cmd/worker && go mod tidy
-    cd cmd/worker && go run github.com/syumai/workers/cmd/workers-assets-gen@v0.27.0
+    cd cmd/worker && go run github.com/syumai/workers/cmd/workers-assets-gen@v0.28.1
     cd cmd/worker && tinygo build -o build/app.wasm -target wasm -no-debug .
     @mkdir -p build
     @mv cmd/worker/build/* build/

@@ -19,7 +19,7 @@ var (
 type Response struct {
 	Success bool `json:"success"`
 	Result  []struct {
-		Results []map[string]interface{} `json:"results"`
+		Results []map[string]any `json:"results"`
 	} `json:"result"`
 }
 
@@ -42,7 +42,7 @@ func NewCloudflareAPI(accountID, d1ID, token string) *CloudflareAPI {
 }
 
 // ExecuteSQL executes a SQL statement on D1 and returns the results.
-func (c *CloudflareAPI) ExecuteSQL(ctx context.Context, sql string, params []interface{}) ([]map[string]interface{}, error) {
+func (c *CloudflareAPI) ExecuteSQL(ctx context.Context, sql string, params []any) ([]map[string]any, error) {
 	url := fmt.Sprintf(
 		"https://api.cloudflare.com/client/v4/accounts/%s/d1/database/%s/query",
 		c.accountID,
@@ -50,7 +50,7 @@ func (c *CloudflareAPI) ExecuteSQL(ctx context.Context, sql string, params []int
 	)
 
 	// Prepare request body
-	body := map[string]interface{}{
+	body := map[string]any{
 		"sql":    sql,
 		"params": params,
 	}
@@ -93,7 +93,7 @@ func (c *CloudflareAPI) ExecuteSQL(ctx context.Context, sql string, params []int
 	}
 
 	if len(d1Resp.Result) == 0 || len(d1Resp.Result[0].Results) == 0 {
-		return []map[string]interface{}{}, nil
+		return []map[string]any{}, nil
 	}
 
 	return d1Resp.Result[0].Results, nil

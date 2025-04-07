@@ -1,5 +1,6 @@
 .env
 .wrangler
+.history
 wrangler.toml
 build/
 node_modules/

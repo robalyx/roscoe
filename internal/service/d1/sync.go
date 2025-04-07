@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	batchSize     = 2500
+	batchSize     = 25
 	maxConcurrent = 5
 )
 
@@ -21,6 +21,7 @@ type Record struct {
 	userID     uint64
 	flagType   uint8
 	confidence float32
+	reasons    string
 }
 
 // SyncService handles syncing flags from Postgres to D1.
@@ -73,7 +74,8 @@ func (s *SyncService) initializeTables(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS user_flags (
 			user_id INTEGER PRIMARY KEY,
 			flag_type INTEGER NOT NULL,
-			confidence REAL NOT NULL
+			confidence REAL NOT NULL,
+			reasons TEXT
 		);
 		CREATE TABLE IF NOT EXISTS api_keys (
 			key TEXT PRIMARY KEY,
@@ -84,7 +86,8 @@ func (s *SyncService) initializeTables(ctx context.Context) error {
 		CREATE TABLE new_flags (
 			user_id INTEGER PRIMARY KEY,
 			flag_type INTEGER NOT NULL,
-			confidence REAL NOT NULL
+			confidence REAL NOT NULL,
+			reasons TEXT
 		);
 	`
 	if _, err := s.cfAPI.ExecuteSQL(ctx, createTableSQL, nil); err != nil {
@@ -97,9 +100,9 @@ func (s *SyncService) initializeTables(ctx context.Context) error {
 func (s *SyncService) fetchRecords(ctx context.Context) ([]Record, error) {
 	log.Printf("📊 Fetching users from database...")
 	rows, err := s.sourceDB.QueryContext(ctx, `
-		SELECT id, 1 as flag_type, confidence FROM flagged_users
+		SELECT id, 1 as flag_type, confidence, reasons FROM flagged_users
 		UNION ALL
-		SELECT id, 2 as flag_type, confidence FROM confirmed_users
+		SELECT id, 2 as flag_type, confidence, reasons FROM confirmed_users
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("error querying users: %w", err)
@@ -111,10 +114,11 @@ func (s *SyncService) fetchRecords(ctx context.Context) ([]Record, error) {
 		var userID uint64
 		var flagType uint8
 		var confidence float32
-		if err := rows.Scan(&userID, &flagType, &confidence); err != nil {
+		var reasons string
+		if err := rows.Scan(&userID, &flagType, &confidence, &reasons); err != nil {
 			return nil, fmt.Errorf("error scanning row: %w", err)
 		}
-		records = append(records, Record{userID: userID, flagType: flagType, confidence: confidence})
+		records = append(records, Record{userID: userID, flagType: flagType, confidence: confidence, reasons: reasons})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating rows: %w", err)
@@ -193,34 +197,45 @@ func (s *SyncService) processBatch(ctx context.Context, batch []Record) error {
 		return nil
 	}
 
-	// Build batch insert statement for temp table
-	sqlStmt := `
-		WITH batch_data(user_id, flag_type, confidence) AS (
-			VALUES
-	`
-	// Build values directly in SQL
-	for i, rec := range batch {
-		if i > 0 {
-			sqlStmt += ","
+	// Process records in smaller chunks to stay within SQLite limits
+	for i := 0; i < len(batch); i += batchSize {
+		end := i + batchSize
+		if end > len(batch) {
+			end = len(batch)
 		}
-		sqlStmt += fmt.Sprintf("(%d, %d, %f)", rec.userID, rec.flagType, rec.confidence)
+		chunk := batch[i:end]
+
+		// Build batch insert statement
+		sqlStmt := `
+			INSERT INTO new_flags (user_id, flag_type, confidence, reasons)
+			VALUES
+		`
+
+		// Build values and params
+		params := make([]any, 0, len(chunk)*4)
+		for j, rec := range chunk {
+			if j > 0 {
+				sqlStmt += ","
+			}
+			sqlStmt += "(?, ?, ?, ?)"
+			params = append(params,
+				rec.userID,
+				rec.flagType,
+				rec.confidence,
+				rec.reasons,
+			)
+		}
+
+		if _, err := s.cfAPI.ExecuteSQL(ctx, sqlStmt, params); err != nil {
+			return fmt.Errorf("error executing D1 statement: %w", err)
+		}
 	}
 
-	sqlStmt += `
-		)
-		INSERT INTO new_flags (user_id, flag_type, confidence)
-		SELECT user_id, flag_type, confidence
-		FROM batch_data
-	`
-
+	// Update progress after successful batch
 	synced := s.syncedFlags.Add(int64(len(batch)))
 	total := s.totalFlags.Load()
 	percentage := float64(synced) / float64(total) * 100
-
 	log.Printf("☁️  Progress: %.1f%% (%d/%d flags)", percentage, synced, total)
-	if _, err := s.cfAPI.ExecuteSQL(ctx, sqlStmt, nil); err != nil {
-		return fmt.Errorf("error executing D1 statement: %w", err)
-	}
 
 	return nil
 }

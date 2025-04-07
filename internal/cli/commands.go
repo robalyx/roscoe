@@ -51,7 +51,7 @@ func AddAPIKey(accountID, d1ID, token, description string) error {
 	cfAPI := d1.NewCloudflareAPI(accountID, d1ID, token)
 
 	sql := `INSERT INTO api_keys (key, description, created_at) VALUES (?, ?, ?)`
-	params := []interface{}{key, description, time.Now().Unix()}
+	params := []any{key, description, time.Now().Unix()}
 
 	if _, err := cfAPI.ExecuteSQL(ctx, sql, params); err != nil {
 		return fmt.Errorf("failed to add API key: %w", err)
@@ -67,7 +67,7 @@ func RemoveAPIKey(accountID, d1ID, token, key string) error {
 	cfAPI := d1.NewCloudflareAPI(accountID, d1ID, token)
 
 	sql := `DELETE FROM api_keys WHERE key = ?`
-	params := []interface{}{key}
+	params := []any{key}
 
 	if _, err := cfAPI.ExecuteSQL(ctx, sql, params); err != nil {
 		return fmt.Errorf("failed to remove API key: %w", err)

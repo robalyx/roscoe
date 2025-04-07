@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // FlagResponse is the response type for flag operations.
 type FlagResponse struct {
-	Flag       uint8
-	Confidence float32
+	Flag       uint8          `json:"flagType"`
+	Confidence *float32       `json:"confidence,omitempty"`
+	Reasons    sql.NullString `json:"reasons,omitempty"`
 }
 
 // FlagService handles flag operations in D1.
@@ -30,20 +32,22 @@ func (s *FlagService) GetUserFlags(ctx context.Context, ids []uint64) (map[uint6
 		return make(map[uint64]FlagResponse), nil
 	}
 
-	// Build query
-	query := "SELECT user_id, flag_type, confidence FROM user_flags WHERE user_id IN ("
-	args := make([]interface{}, len(ids))
+	// Build query for user_flags table
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString("SELECT user_id, flag_type, confidence, reasons FROM user_flags WHERE user_id IN (")
+
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		if i > 0 {
-			query += ","
+			queryBuilder.WriteString(",")
 		}
-		query += "?"
+		queryBuilder.WriteString("?")
 		args[i] = id
 	}
-	query += ")"
+	queryBuilder.WriteString(")")
 
 	// Execute query
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, queryBuilder.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("error querying flags: %w", err)
 	}
@@ -55,13 +59,51 @@ func (s *FlagService) GetUserFlags(ctx context.Context, ids []uint64) (map[uint6
 		var id uint64
 		var flag uint8
 		var confidence float32
-		if err := rows.Scan(&id, &flag, &confidence); err != nil {
+		var reasons sql.NullString
+		if err := rows.Scan(&id, &flag, &confidence, &reasons); err != nil {
 			return nil, fmt.Errorf("error scanning row: %w", err)
 		}
-		flags[id] = FlagResponse{Flag: flag, Confidence: confidence}
+		flags[id] = FlagResponse{
+			Flag:       flag,
+			Confidence: &confidence,
+			Reasons:    reasons,
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// Build query for queued_users table
+	queryBuilder.Reset()
+	queryBuilder.WriteString("SELECT user_id FROM queued_users WHERE processed = 1 AND flagged = 1 AND user_id IN (")
+	for i := range ids {
+		if i > 0 {
+			queryBuilder.WriteString(",")
+		}
+		queryBuilder.WriteString("?")
+	}
+	queryBuilder.WriteString(")")
+
+	// Execute queue query
+	queueRows, err := s.db.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying queued users: %w", err)
+	}
+	defer queueRows.Close()
+
+	// Add queued users that aren't already in flags map
+	for queueRows.Next() {
+		var id uint64
+		if err := queueRows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("error scanning queue row: %w", err)
+		}
+		// Only add if not already in flags map
+		if _, exists := flags[id]; !exists {
+			flags[id] = FlagResponse{Flag: 3}
+		}
+	}
+	if err := queueRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating queue rows: %w", err)
 	}
 
 	return flags, nil

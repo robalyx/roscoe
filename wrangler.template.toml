@@ -13,3 +13,6 @@ database_id = "${ROSCOE_CF_D1_ID}"
 
 [observability.logs]
 enabled = true
+
+[vars]
+REQUIRE_AUTH = "${REQUIRE_AUTH}"
